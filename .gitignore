@@ -1,0 +1,14 @@
+# NPM dependencies
+node_modules/
+package-lock.json
+
+# Environment variables
+.env
+
+# Test scripts
+tmp_test_barcode.js
+
+# Data/Temp/PDFs
+*.pdf
+tmp/
+*.log
