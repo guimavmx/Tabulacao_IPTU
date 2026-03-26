@@ -2,6 +2,13 @@
 node_modules/
 package-lock.json
 
+# Next.js
+.next/
+next-env.d.ts
+
+# Memory / IDE
+.claude/
+
 # Environment variables
 .env
 
