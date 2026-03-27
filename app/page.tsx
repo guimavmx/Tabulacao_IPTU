@@ -114,7 +114,7 @@ export default function HomePage() {
         const chunkResults = await Promise.all(
           pageChunks.map(async (chunkBuf, c) => {
             const fd = new FormData();
-            fd.append('pdf', new File([chunkBuf], f.name, { type: 'application/pdf' }));
+            fd.append('pdf', new File([chunkBuf as unknown as ArrayBuffer], f.name, { type: 'application/pdf' }));
 
             const r = await fetch('/api/extract', {
               method: 'POST',

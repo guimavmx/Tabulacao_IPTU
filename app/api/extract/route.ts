@@ -205,9 +205,9 @@ export async function POST(req: NextRequest) {
           // Anthropic: processa todos os chunks em paralelo
           if (provider === 'anthropic') {
             await Promise.all(
-              pdfChunks.map(async ({ base64, end }) => {
+              pdfChunks.map(async ({ base64 }) => {
                 const message = await anthropicClient!.messages.create({
-                  model: 'claude-sonnet-4-5',
+                  model: 'claude-sonnet-4-20250514',
                   max_tokens: 4096,
                   system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
                   messages: [{
