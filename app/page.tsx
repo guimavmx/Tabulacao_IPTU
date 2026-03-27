@@ -76,68 +76,101 @@ export default function HomePage() {
     setProgress({ text: 'Iniciando…', pct: 0, active: true });
     addLog(`Iniciando extração de ${files.length} arquivo(s)…`, 'hi');
 
+    const { PDFDocument } = await import('pdf-lib');
+    const PAGES_PER_CHUNK = 10;
+
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      setProgress({ text: `[${i + 1}/${files.length}] ${f.name}`, pct: Math.round((i / files.length) * 100), active: true });
       setFileStates(prev => ({ ...prev, [i]: 'processing' }));
       addLog(`Enviando: ${f.name}`, '');
 
       try {
-        const fd = new FormData();
-        fd.append('pdf', f);
-        const r = await fetch('/api/extract', {
-          method: 'POST',
-          headers: { 'x-api-key': clean, 'x-api-provider': provider },
-          body: fd,
-        });
+        // Divide o PDF no browser antes de enviar (evita erro 413 no Vercel)
+        const fileBuffer = await f.arrayBuffer();
+        const pdfDoc = await PDFDocument.load(fileBuffer, { ignoreEncryption: true });
+        const totalPages = pdfDoc.getPageCount();
 
-        if (!r.ok) {
-          const errText = await r.text().catch(() => `HTTP ${r.status}`);
-          throw new Error(`Servidor retornou ${r.status}: ${errText}`);
+        const pageChunks: Uint8Array[] = [];
+        for (let p = 0; p < totalPages; p += PAGES_PER_CHUNK) {
+          const end = Math.min(p + PAGES_PER_CHUNK, totalPages);
+          const newPdf = await PDFDocument.create();
+          const pages = await newPdf.copyPages(pdfDoc, Array.from({ length: end - p }, (_, j) => p + j));
+          pages.forEach(page => newPdf.addPage(page));
+          pageChunks.push(await newPdf.save());
         }
 
-        const reader = r.body!.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let chunksReceived = 0;
-        let doneReceived = false;
+        if (pageChunks.length > 1) {
+          addLog(`  PDF dividido em ${pageChunks.length} lotes (${totalPages} págs.)`, '');
+        }
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n\n');
-          buffer = lines.pop()!;
+        let fileError = false;
 
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const payload = JSON.parse(line.substring(6));
+        for (let c = 0; c < pageChunks.length; c++) {
+          const overallPct = Math.round(((i + (c / pageChunks.length)) / files.length) * 100);
+          setProgress({
+            text: `[${i + 1}/${files.length}] ${f.name}${pageChunks.length > 1 ? ` — lote ${c + 1}/${pageChunks.length}` : ''}`,
+            pct: overallPct,
+            active: true,
+          });
 
-            if (payload.type === 'chunk') {
-              chunksReceived++;
-              const arr: IptuRecord[] = Array.isArray(payload.data) ? payload.data : [payload.data];
-              setResults(prev => [...prev, ...arr.map(item => ({ ...item, _status: 'ok' as const }))]);
-              const pct = Math.round(payload.progress * 100);
-              setProgress({ text: `Analisando páginas... ${pct}%`, pct, active: true });
-              addLog(`  ↳ Lote processado (+${arr.length} guias)`, 'ok');
-            } else if (payload.type === 'error') {
-              setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: payload.error } as IptuRecord]);
-              setFileStates(prev => ({ ...prev, [i]: 'error' }));
-              addLog(`  ✗ ${payload.error}`, 'err');
-            } else if (payload.type === 'done') {
-              doneReceived = true;
-              setFileStates(prev => ({ ...prev, [i]: 'done' }));
-              addLog(`  ✓ Arquivo totalmente extraído`, 'ok');
+          const fd = new FormData();
+          fd.append('pdf', new File([pageChunks[c]], f.name, { type: 'application/pdf' }));
+
+          const r = await fetch('/api/extract', {
+            method: 'POST',
+            headers: { 'x-api-key': clean, 'x-api-provider': provider },
+            body: fd,
+          });
+
+          if (!r.ok) {
+            const errText = await r.text().catch(() => `HTTP ${r.status}`);
+            throw new Error(`Servidor retornou ${r.status}: ${errText}`);
+          }
+
+          const reader = r.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let chunksReceived = 0;
+          let doneReceived = false;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop()!;
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const payload = JSON.parse(line.substring(6));
+
+              if (payload.type === 'chunk') {
+                chunksReceived++;
+                const arr: IptuRecord[] = Array.isArray(payload.data) ? payload.data : [payload.data];
+                setResults(prev => [...prev, ...arr.map(item => ({ ...item, _status: 'ok' as const }))]);
+                addLog(`  ↳ Lote ${c + 1} processado (+${arr.length} guias)`, 'ok');
+              } else if (payload.type === 'error') {
+                setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: payload.error } as IptuRecord]);
+                addLog(`  ✗ ${payload.error}`, 'err');
+                fileError = true;
+              } else if (payload.type === 'done') {
+                doneReceived = true;
+              }
             }
+          }
+
+          if (!doneReceived && chunksReceived === 0) {
+            const msg = 'Stream encerrado sem resposta — provável timeout do servidor (limite do plano Vercel Hobby: 10s)';
+            setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: msg } as IptuRecord]);
+            addLog(`  ✗ ${msg}`, 'err');
+            fileError = true;
+            break;
           }
         }
 
-        if (!doneReceived && chunksReceived === 0) {
-          const msg = 'Stream encerrado sem resposta — provável timeout do servidor (limite do plano Vercel Hobby: 10s)';
-          setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: msg } as IptuRecord]);
-          setFileStates(prev => ({ ...prev, [i]: 'error' }));
-          addLog(`  ✗ ${msg}`, 'err');
-        }
+        setFileStates(prev => ({ ...prev, [i]: fileError ? 'error' : 'done' }));
+        if (!fileError) addLog(`  ✓ Arquivo totalmente extraído`, 'ok');
+
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: msg } as IptuRecord]);
