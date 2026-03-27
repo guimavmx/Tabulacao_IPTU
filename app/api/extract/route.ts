@@ -176,8 +176,19 @@ export async function POST(req: NextRequest) {
             })
           );
 
-        // ── Anthropic / Gemini: processamento sequencial (já otimizado) ────────
+        // ── Anthropic / Gemini ────────────────────────────────────────────────
         } else {
+          // Instancia o cliente uma única vez fora do loop
+          const anthropicClient = provider === 'anthropic' ? new Anthropic({ apiKey }) : null;
+          const geminiClient = provider !== 'anthropic'
+            ? new GoogleGenerativeAI(apiKey).getGenerativeModel({
+                model: provider === 'gemini-3' ? 'gemini-3-flash-preview' : 'gemini-2.5-flash',
+                systemInstruction: SYSTEM_PROMPT,
+              })
+            : null;
+
+          // Gera todos os chunks de PDF antecipadamente
+          const pdfChunks: { base64: string; end: number }[] = [];
           for (let i = 0; i < totalPages; i += chunkSize) {
             const chunkEnd = Math.min(i + chunkSize, totalPages);
             const newPdf = await PDFDocument.create();
@@ -186,45 +197,53 @@ export async function POST(req: NextRequest) {
               Array.from({ length: chunkEnd - i }, (_, idx) => i + idx)
             );
             copied.forEach(page => newPdf.addPage(page));
-            const base64Chunk = Buffer.from(await newPdf.save()).toString('base64');
+            pdfChunks.push({ base64: Buffer.from(await newPdf.save()).toString('base64'), end: chunkEnd });
+          }
 
-            let text = '';
+          let completed = 0;
 
-            if (provider === 'anthropic') {
-              const client = new Anthropic({ apiKey });
-              const message = await client.messages.create({
-                model: 'claude-sonnet-4-5',
-                max_tokens: 4096,
-                system: SYSTEM_PROMPT,
-                messages: [{
-                  role: 'user',
-                  content: [
-                    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Chunk } },
-                    { type: 'text', text: `Extraia os dados de TODOS os IPTUs deste documento. Retorne APENAS um array JSON válido. Nome do arquivo: ${filename}` }
-                  ]
-                }, {
-                  role: 'assistant',
-                  content: '['
-                }]
-              });
-              text = message.content.map(b => ('text' in b ? b.text : '')).join('').trim();
+          // Anthropic: processa todos os chunks em paralelo
+          if (provider === 'anthropic') {
+            await Promise.all(
+              pdfChunks.map(async ({ base64, end }) => {
+                const message = await anthropicClient!.messages.create({
+                  model: 'claude-sonnet-4-5',
+                  max_tokens: 4096,
+                  system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+                  messages: [{
+                    role: 'user',
+                    content: [
+                      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+                      { type: 'text', text: `Extraia os dados de TODOS os IPTUs deste documento. Retorne APENAS um array JSON válido. Nome do arquivo: ${filename}` }
+                    ]
+                  }, {
+                    role: 'assistant',
+                    content: '['
+                  }]
+                });
+                const text = message.content.map(b => ('text' in b ? b.text : '')).join('').trim();
+                let parsed = parseAiResponse(text);
+                if (!Array.isArray(parsed)) parsed = [parsed];
+                applyBarcodeValidation(parsed, filename);
+                completed++;
+                send({ type: 'chunk', data: parsed, progress: completed / pdfChunks.length });
+              })
+            );
 
-            } else {
-              const genAI = new GoogleGenerativeAI(apiKey);
-              const modelName = provider === 'gemini-3' ? 'gemini-3-flash-preview' : 'gemini-2.5-flash';
-              const model = genAI.getGenerativeModel({ model: modelName, systemInstruction: SYSTEM_PROMPT });
-              const result = await model.generateContent([
+          // Gemini: mantém sequencial (não tem rate limit generoso o suficiente para paralelo)
+          } else {
+            for (const { base64, end } of pdfChunks) {
+              const result = await geminiClient!.generateContent([
                 `Extraia os dados de TODOS os IPTUs deste documento. Retome APENAS um array JSON válido iniciando obrigatoriamente com o caractere '['. Nome do arquivo: ${filename}`,
-                { inlineData: { data: base64Chunk, mimeType: 'application/pdf' } }
+                { inlineData: { data: base64, mimeType: 'application/pdf' } }
               ]);
-              text = result.response.text().trim();
+              const text = result.response.text().trim();
+              let parsed = parseAiResponse(text);
+              if (!Array.isArray(parsed)) parsed = [parsed];
+              applyBarcodeValidation(parsed, filename);
+              completed++;
+              send({ type: 'chunk', data: parsed, progress: end / totalPages });
             }
-
-            let parsed = parseAiResponse(text);
-            if (!Array.isArray(parsed)) parsed = [parsed];
-            applyBarcodeValidation(parsed, filename);
-
-            send({ type: 'chunk', data: parsed, progress: chunkEnd / totalPages });
           }
         }
 

@@ -103,69 +103,80 @@ export default function HomePage() {
           addLog(`  PDF dividido em ${pageChunks.length} lotes (${totalPages} págs.)`, '');
         }
 
-        let fileError = false;
+        setProgress({
+          text: `[${i + 1}/${files.length}] ${f.name}${pageChunks.length > 1 ? ` — ${pageChunks.length} lotes em paralelo` : ''}`,
+          pct: Math.round((i / files.length) * 100),
+          active: true,
+        });
 
-        for (let c = 0; c < pageChunks.length; c++) {
-          const overallPct = Math.round(((i + (c / pageChunks.length)) / files.length) * 100);
-          setProgress({
-            text: `[${i + 1}/${files.length}] ${f.name}${pageChunks.length > 1 ? ` — lote ${c + 1}/${pageChunks.length}` : ''}`,
-            pct: overallPct,
-            active: true,
-          });
+        let completedChunks = 0;
 
-          const fd = new FormData();
-          fd.append('pdf', new File([pageChunks[c]], f.name, { type: 'application/pdf' }));
+        const chunkResults = await Promise.all(
+          pageChunks.map(async (chunkBuf, c) => {
+            const fd = new FormData();
+            fd.append('pdf', new File([chunkBuf], f.name, { type: 'application/pdf' }));
 
-          const r = await fetch('/api/extract', {
-            method: 'POST',
-            headers: { 'x-api-key': clean, 'x-api-provider': provider },
-            body: fd,
-          });
+            const r = await fetch('/api/extract', {
+              method: 'POST',
+              headers: { 'x-api-key': clean, 'x-api-provider': provider },
+              body: fd,
+            });
 
-          if (!r.ok) {
-            const errText = await r.text().catch(() => `HTTP ${r.status}`);
-            throw new Error(`Servidor retornou ${r.status}: ${errText}`);
-          }
+            if (!r.ok) {
+              const errText = await r.text().catch(() => `HTTP ${r.status}`);
+              return { error: true, msg: `Servidor retornou ${r.status}: ${errText}` };
+            }
 
-          const reader = r.body!.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let chunksReceived = 0;
-          let doneReceived = false;
+            const reader = r.body!.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let chunksReceived = 0;
+            let doneReceived = false;
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n\n');
-            buffer = lines.pop()!;
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n\n');
+              buffer = lines.pop()!;
 
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue;
-              const payload = JSON.parse(line.substring(6));
+              for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const payload = JSON.parse(line.substring(6));
 
-              if (payload.type === 'chunk') {
-                chunksReceived++;
-                const arr: IptuRecord[] = Array.isArray(payload.data) ? payload.data : [payload.data];
-                setResults(prev => [...prev, ...arr.map(item => ({ ...item, _status: 'ok' as const }))]);
-                addLog(`  ↳ Lote ${c + 1} processado (+${arr.length} guias)`, 'ok');
-              } else if (payload.type === 'error') {
-                setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: payload.error } as IptuRecord]);
-                addLog(`  ✗ ${payload.error}`, 'err');
-                fileError = true;
-              } else if (payload.type === 'done') {
-                doneReceived = true;
+                if (payload.type === 'chunk') {
+                  chunksReceived++;
+                  const arr: IptuRecord[] = Array.isArray(payload.data) ? payload.data : [payload.data];
+                  setResults(prev => [...prev, ...arr.map(item => ({ ...item, _status: 'ok' as const }))]);
+                  addLog(`  ↳ Lote ${c + 1} processado (+${arr.length} guias)`, 'ok');
+                } else if (payload.type === 'error') {
+                  return { error: true, msg: payload.error };
+                } else if (payload.type === 'done') {
+                  doneReceived = true;
+                }
               }
             }
-          }
 
-          if (!doneReceived && chunksReceived === 0) {
-            const msg = 'Stream encerrado sem resposta — provável timeout do servidor (limite do plano Vercel Hobby: 10s)';
-            setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: msg } as IptuRecord]);
-            addLog(`  ✗ ${msg}`, 'err');
-            fileError = true;
-            break;
-          }
+            if (!doneReceived && chunksReceived === 0) {
+              return { error: true, msg: 'Stream encerrado sem resposta — provável timeout do servidor (limite do plano Vercel Hobby: 10s)' };
+            }
+
+            completedChunks++;
+            setProgress({
+              text: `[${i + 1}/${files.length}] ${f.name} — ${completedChunks}/${pageChunks.length} lotes concluídos`,
+              pct: Math.round(((i + completedChunks / pageChunks.length) / files.length) * 100),
+              active: true,
+            });
+
+            return { error: false, msg: '' };
+          })
+        );
+
+        const firstError = chunkResults.find(r => r.error);
+        const fileError = !!firstError;
+        if (fileError) {
+          setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: firstError!.msg } as IptuRecord]);
+          addLog(`  ✗ ${firstError!.msg}`, 'err');
         }
 
         setFileStates(prev => ({ ...prev, [i]: fileError ? 'error' : 'done' }));
