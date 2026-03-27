@@ -9,6 +9,7 @@ import ResultsTable from '@/components/ResultsTable';
 import { IptuRecord, ApiProvider } from '@/lib/types';
 
 interface LogEntry { msg: string; type: 'ok' | 'err' | 'hi' | ''; }
+interface TokenUsage { input: number; output: number; cacheRead: number; cacheCreated: number; }
 
 export default function HomePage() {
   const [apiKey, setApiKey] = useState('');
@@ -20,6 +21,7 @@ export default function HomePage() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ text: '', pct: 0, active: false });
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage | null>(null);
 
   const addLog = useCallback((msg: string, type: LogEntry['type'] = '') => {
     setLogs(prev => [...prev, { msg, type }]);
@@ -149,6 +151,13 @@ export default function HomePage() {
                   const arr: IptuRecord[] = Array.isArray(payload.data) ? payload.data : [payload.data];
                   setResults(prev => [...prev, ...arr.map(item => ({ ...item, _status: 'ok' as const }))]);
                   addLog(`  ↳ Lote ${c + 1} processado (+${arr.length} guias)`, 'ok');
+                } else if (payload.type === 'usage') {
+                  setTokenUsage(prev => ({
+                    input:        (prev?.input        ?? 0) + (payload.input        ?? 0),
+                    output:       (prev?.output       ?? 0) + (payload.output       ?? 0),
+                    cacheRead:    (prev?.cacheRead    ?? 0) + (payload.cacheRead    ?? 0),
+                    cacheCreated: (prev?.cacheCreated ?? 0) + (payload.cacheCreated ?? 0),
+                  }));
                 } else if (payload.type === 'error') {
                   return { error: true, msg: payload.error };
                 } else if (payload.type === 'done') {
@@ -205,6 +214,9 @@ export default function HomePage() {
       { key: 'endereco', label: 'Endereço' },
       { key: 'validade', label: 'Validade' },
       { key: 'valor_principal', label: 'Valor Principal' },
+      { key: 'multa', label: 'Multa' },
+      { key: 'juros', label: 'Juros' },
+      { key: 'descontos', label: 'Descontos' },
       { key: 'total_a_pagar', label: 'Total a Pagar' },
       { key: 'duam', label: 'DUAM' },
       { key: 'codigo_barras', label: 'Código de Barras' },
@@ -212,12 +224,12 @@ export default function HomePage() {
     ];
     const headers = COLS_KEYS.map(c => c.label);
     const rows = results.map(r => {
-      if (r._status === 'error') return [r.nome_documento, 'ERRO', '', '', '', '', '', '', '', r._error || ''];
-      return COLS_KEYS.map(c => (r as unknown as Record<string, string>)[c.key] || '');
+      if (r._status === 'error') return [r.nome_documento, 'ERRO', '', '', '', '', '', '', '', '', '', '', r._error || ''];
+      return COLS_KEYS.map(c => (r as unknown as Record<string, string>)[c.key] ?? '');
     });
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    ws['!cols'] = [30, 25, 22, 40, 14, 16, 16, 20, 50, 30].map(w => ({ wch: w }));
+    ws['!cols'] = [30, 25, 22, 40, 14, 16, 12, 12, 12, 16, 20, 50, 30].map(w => ({ wch: w }));
     XLSX.utils.book_append_sheet(wb, ws, 'IPTU');
     XLSX.writeFile(wb, `IPTU_Extraido_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }, [results]);
@@ -228,6 +240,7 @@ export default function HomePage() {
     setFileStates({});
     setLogs([]);
     setProgress({ text: '', pct: 0, active: false });
+    setTokenUsage(null);
   }, []);
 
   return (
@@ -274,6 +287,7 @@ export default function HomePage() {
                   progressText={progress.text}
                   progressPct={progress.pct}
                   logs={logs}
+                  tokenUsage={tokenUsage}
                 />
               </div>
             )}

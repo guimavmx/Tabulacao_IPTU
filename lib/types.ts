@@ -7,6 +7,9 @@ export interface IptuRecord {
   endereco: string;
   validade: string;
   valor_principal: string;
+  multa: string;
+  juros: string;
+  descontos: string;
   total_a_pagar: string;
   duam: string;
   codigo_barras: string;
@@ -22,6 +25,9 @@ export const COLS: { key: keyof IptuRecord; label: string; cls: string }[] = [
   { key: 'endereco',            label: 'Endereço',            cls: '' },
   { key: 'validade',            label: 'Validade',            cls: 'mono' },
   { key: 'valor_principal',     label: 'Valor Principal',     cls: 'val' },
+  { key: 'multa',               label: 'Multa',               cls: 'val' },
+  { key: 'juros',               label: 'Juros',               cls: 'val' },
+  { key: 'descontos',           label: 'Descontos',           cls: 'val' },
   { key: 'total_a_pagar',       label: 'Total a Pagar',       cls: 'val' },
   { key: 'duam',                label: 'DUAM',                cls: 'mono' },
   { key: 'codigo_barras',       label: 'Código de Barras',    cls: 'mono' },
