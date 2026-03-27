@@ -259,8 +259,10 @@ export async function POST(req: NextRequest) {
                 });
                 anthropicUsage.input += message.usage.input_tokens;
                 anthropicUsage.output += message.usage.output_tokens;
-                anthropicUsage.cacheRead += (message.usage as Record<string, number>).cache_read_input_tokens ?? 0;
-                anthropicUsage.cacheCreated += (message.usage as Record<string, number>).cache_creation_input_tokens ?? 0;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const u = message.usage as any;
+                anthropicUsage.cacheRead += u.cache_read_input_tokens ?? 0;
+                anthropicUsage.cacheCreated += u.cache_creation_input_tokens ?? 0;
                 const text = message.content.map(b => ('text' in b ? b.text : '')).join('').trim();
                 let parsed = parseAiResponse(text);
                 if (!Array.isArray(parsed)) parsed = [parsed];
