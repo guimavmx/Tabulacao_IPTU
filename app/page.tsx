@@ -91,9 +91,16 @@ export default function HomePage() {
           body: fd,
         });
 
+        if (!r.ok) {
+          const errText = await r.text().catch(() => `HTTP ${r.status}`);
+          throw new Error(`Servidor retornou ${r.status}: ${errText}`);
+        }
+
         const reader = r.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let chunksReceived = 0;
+        let doneReceived = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -107,6 +114,7 @@ export default function HomePage() {
             const payload = JSON.parse(line.substring(6));
 
             if (payload.type === 'chunk') {
+              chunksReceived++;
               const arr: IptuRecord[] = Array.isArray(payload.data) ? payload.data : [payload.data];
               setResults(prev => [...prev, ...arr.map(item => ({ ...item, _status: 'ok' as const }))]);
               const pct = Math.round(payload.progress * 100);
@@ -117,10 +125,18 @@ export default function HomePage() {
               setFileStates(prev => ({ ...prev, [i]: 'error' }));
               addLog(`  ✗ ${payload.error}`, 'err');
             } else if (payload.type === 'done') {
+              doneReceived = true;
               setFileStates(prev => ({ ...prev, [i]: 'done' }));
               addLog(`  ✓ Arquivo totalmente extraído`, 'ok');
             }
           }
+        }
+
+        if (!doneReceived && chunksReceived === 0) {
+          const msg = 'Stream encerrado sem resposta — provável timeout do servidor (limite do plano Vercel Hobby: 10s)';
+          setResults(prev => [...prev, { nome_documento: f.name, _status: 'error', _error: msg } as IptuRecord]);
+          setFileStates(prev => ({ ...prev, [i]: 'error' }));
+          addLog(`  ✗ ${msg}`, 'err');
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
