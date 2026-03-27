@@ -212,8 +212,13 @@ export async function POST(req: NextRequest) {
           const anthropicClient = provider === 'anthropic' ? new Anthropic({ apiKey }) : null;
           const geminiClient = provider !== 'anthropic'
             ? new GoogleGenerativeAI(apiKey).getGenerativeModel({
-                model: provider === 'gemini-3' ? 'gemini-3-flash-preview' : 'gemini-2.5-flash',
+                model: provider === 'gemini-3' ? 'gemini-2.0-flash' : 'gemini-2.5-flash',
                 systemInstruction: SYSTEM_PROMPT,
+                generationConfig: {
+                  temperature: 0,
+                  maxOutputTokens: 16000,
+                  responseMimeType: 'application/json',
+                },
               })
             : null;
 
