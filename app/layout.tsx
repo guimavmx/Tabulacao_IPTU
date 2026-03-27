@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR" className={`${plusJakarta.variable} ${ibmMono.variable}`}>
+    <html lang="pt-BR" className={`${plusJakarta.variable} ${ibmMono.variable}`} suppressHydrationWarning>
       <body>
         <div className="app-shell">
           <Sidebar />
