@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev -p 3131",
     "build": "next build",
-    "start": "next start -p 3131"
+    "start": "next start -p 3131",
+    "git:clone": "node scripts/git-flow.js clone",
+    "git:push": "node scripts/git-flow.js push"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
