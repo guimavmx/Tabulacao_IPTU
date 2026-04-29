@@ -16,11 +16,11 @@ export default function StatsCards({ results }: Props) {
         <div className="stat-l">Total</div>
       </div>
       <div className="stat">
-        <div className="stat-n" style={{ color: '#22c55e' }}>{ok}</div>
+        <div className="stat-n stat-ok">{ok}</div>
         <div className="stat-l">Extraídos</div>
       </div>
       <div className="stat">
-        <div className="stat-n" style={{ color: '#ef4444' }}>{err}</div>
+        <div className="stat-n stat-err">{err}</div>
         <div className="stat-l">Erros</div>
       </div>
     </div>
